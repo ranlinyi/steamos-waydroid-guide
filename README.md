@@ -48,6 +48,17 @@ EOF
 - <code>steamos-readonly status</code> 通常为 <code>enabled</code>；
 - 若 <code>/nix</code> 已存在，多半是 home 分区上的 bind mount（SteamOS 3.5+ 自带），装 Nix 不会动只读根。
 
+### 0.1 操作方式：从一台电脑通过 SSH 远程操作 Deck
+
+**本指南默认你在另一台电脑（PC / 笔记本）上，通过 SSH 远程操作 Deck**，而不是直接在 Deck 上敲命令：
+
+- **电脑**：执行 <code>ssh</code> / <code>scp</code> / <code>rsync</code>；负责下载与校验大文件（Waydroid 镜像、Nix 闭包等），再推送到 Deck。
+- **Deck**：被操作的目标机，用占位符 <code>DECK_IP</code> 表示；命令普遍写成远程执行的形式：
+  <code>sshpass -p 'DECK_PASS' ssh deck@DECK_IP 'bash -ls' &lt;&lt;'EOF' ... EOF</code>
+- **少数步骤必须在 Deck 本机（图形界面）完成**：游戏模式里启动 Waydroid 条目、设置该快捷方式的 Steam 输入、装 Decky 插件等；文内会明确写「在 Deck 上操作」。
+
+约定：<code>DECK_IP</code> / <code>DECK_PASS</code> 是占位符，请替换为你的实际值；本文未特别说明的命令，都是在**电脑**上执行。
+
 ---
 
 ## 1. 总体架构

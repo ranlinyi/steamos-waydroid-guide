@@ -48,6 +48,17 @@ Notes:
 - <code>steamos-readonly status</code> is normally <code>enabled</code>.
 - If <code>/nix</code> already exists, it is usually a bind mount on the home partition (present since SteamOS 3.5), so installing Nix does not touch the read-only root.
 
+### 0.1 How this guide is used: operate the Deck remotely over SSH
+
+**Everything here assumes you drive the Deck from another computer (your PC/laptop) over SSH**, not by typing on the Deck itself:
+
+- **PC**: runs <code>ssh</code> / <code>scp</code> / <code>rsync</code>; downloads and verifies large files (Waydroid images, Nix closures), then pushes them to the Deck.
+- **Deck**: the target machine, written as <code>DECK_IP</code>. Commands are usually shown as remote-execution snippets:
+  <code>sshpass -p 'DECK_PASS' ssh deck@DECK_IP 'bash -ls' &lt;&lt;'EOF' ... EOF</code>
+- **A few steps must be done on the Deck itself (graphical UI)**: launching the Waydroid entry in Game Mode, setting that shortcut's Steam Input, installing the Decky plugin, etc. The text marks these clearly.
+
+Placeholders: replace <code>DECK_IP</code> / <code>DECK_PASS</code> with your own values. Unless stated otherwise, every command runs on the **PC**.
+
 ---
 
 ## 1. Architecture
