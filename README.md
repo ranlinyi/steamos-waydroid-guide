@@ -17,7 +17,7 @@
 5. 跑安装脚本完成 /etc 配置、firewalld、服务、libhoudini（ARM 转译）。
 6. 游戏模式入口用 <code>cage</code> 套 <code>gamescope</code>（这是 gamescope 下让 Waydroid 可见的标准做法）。
 7. 可选：配 Steam 库美术四槽位、设 16:9 分辨率（自动化工具通常只认 16:9）。
-8. **关键**：游戏模式里要把该快捷方式的 **Steam 输入设为“禁用”**（属性 → 控制器），否则 Waydroid 的触屏/手柄会被 Steam 接管重映射而异常（见 §7.1）。
+8. **关键**：游戏模式里要把该快捷方式的 **Steam 输入设为“强制开启”**（属性 → 控制器），否则 Waydroid 的触屏/手柄操作会异常（见 §7.1）。
 
 ---
 
@@ -237,18 +237,18 @@ WAYDROID_RES=1280x720 %command%
 
 > 已知现象：游戏模式入口**第一次常失败、第二次才成**（会话/容器冷启动时序）。日志一般在 <code>~/.local/share/waydroid/gamemode.log</code>。
 
-### 7.1 必须：禁用 Steam 输入（否则触屏/操作异常）
+### 7.1 必须：强制启用 Steam 输入（否则触屏/操作异常）
 
-游戏模式下**直接用手柄/触屏操作 Waydroid 会出现异常**：触屏点击错位、拖拽不跟手、按键无响应等。原因是 **Steam 输入（Steam Input）会接管并重映射手柄与触控事件**，Waydroid 收到的不是原始输入。
+游戏模式下**直接用手柄/触屏操作 Waydroid 会出现异常**：触屏点击错位、拖拽不跟手、按键无响应等。
 
-必须对这条快捷方式关闭 Steam 输入：
+必须对这条快捷方式**强制启用 Steam 输入**，由 Steam 负责把 Deck 的触控/手柄正确映射给 Waydroid：
 
 1. Steam 库 → 选中 <code>Waydroid</code>；
 2. 打开 **属性**（游戏页面的齿轮图标，或右键 → 属性）；
 3. 进入 **控制器** 标签；
-4. 在 **Steam 输入** 下拉里选择 **禁用 Steam 输入**（英文：Disable Steam Input）。
+4. 在 **Steam 输入** 下拉里选择 **强制开启**（英文：Force On / Force Enable）。
 
-> 不同客户端版本该下拉可能显示为 默认 / 启用 / 禁用 三档，选“禁用”即可。关闭后 Waydroid 直接接收原始输入，触屏与手柄恢复正常。
+> 不同客户端版本该下拉可能显示为 默认设置 / 强制开启 / 强制关闭（或 启用/禁用）三档；请选“强制开启”，**不要选关闭**。设置后 Waydroid 的触屏与手柄操作恢复正常。
 
 ---
 
@@ -289,7 +289,7 @@ WAYDROID_RES=1280x720 %command%
 | Nix 报 <code>api.github.com ... 403</code> | GitHub API 限流 | 用 pin 死的 rev，或给 flake 生成并提交 lock |
 | 官方镜像下载极慢 | SourceForge 镜像慢 | 在快机器下载+校验后推送；或用下载器多连接+代理 |
 | overlayfs 不可用 | /home 是 ext4 + casefold | 属预期；<code>mount_overlays=False</code>，写进 system.img |
-| 游戏模式里触屏/手柄异常（点击错位、拖拽不跟手） | Steam 输入接管并重映射了输入 | 属性 → 控制器 → Steam 输入 → 禁用 Steam 输入（见 §7.1） |
+| 游戏模式里触屏/手柄异常（点击错位、拖拽不跟手） | 未强制启用 Steam 输入，Deck 控制未正确映射给 Waydroid | 属性 → 控制器 → Steam 输入 → 强制开启（见 §7.1） |
 
 ---
 

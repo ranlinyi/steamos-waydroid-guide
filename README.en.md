@@ -17,7 +17,7 @@
 5. Run the setup script: /etc config, firewalld, services, libhoudini (ARM translation).
 6. Game Mode entry = <code>cage</code> around <code>gamescope</code> (the standard way to make Waydroid visible under gamescope).
 7. Optional: Steam library artwork (4 slots) and a 16:9 resolution (automation tools usually require 16:9).
-8. **Critical**: set the shortcut's **Steam Input to Disabled** (Properties → Controller), otherwise Steam intercepts/remaps touch & gamepad and Waydroid misbehaves (see §7.1).
+8. **Critical**: set the shortcut's **Steam Input to "Force Enabled"** (Properties → Controller), otherwise touch/gamepad in Waydroid misbehaves (see §7.1).
 
 ---
 
@@ -237,18 +237,18 @@ WAYDROID_RES=1280x720 %command%
 
 > Known behavior: the Game Mode entry often **fails the first time and works the second time** (cold-start timing of session/container). Logs are usually at <code>~/.local/share/waydroid/gamemode.log</code>.
 
-### 7.1 Required: disable Steam Input (otherwise touch/input misbehaves)
+### 7.1 Required: force-enable Steam Input (otherwise touch/input misbehaves)
 
-In Game Mode, **operating Waydroid directly with touch/gamepad is glitchy**: taps land in the wrong place, drags lag behind, buttons seem dead. The cause is **Steam Input capturing and remapping gamepad and touch events**, so Waydroid does not receive raw input.
+In Game Mode, **operating Waydroid directly with touch/gamepad is glitchy**: taps land in the wrong place, drags lag behind, buttons seem dead.
 
-Disable Steam Input for this shortcut:
+You must **force-enable Steam Input** for this shortcut so Steam maps the Deck's touch/gamepad into input Waydroid can consume:
 
 1. Steam Library → select <code>Waydroid</code>.
 2. Open **Properties** (gear icon on the game page, or right-click → Properties).
 3. Go to the **Controller** tab.
-4. Set **Steam Input** to **Disabled** (Disable Steam Input).
+4. Set **Steam Input** to **Force Enabled** (Force On).
 
-> Depending on the client version the dropdown may show Default / Enabled / Disabled; choose Disabled. After that Waydroid receives raw input and touch/gamepad behave normally.
+> Depending on the client version the dropdown may show Default / Force Enabled / Force Disabled; choose Force Enabled, **not** Disabled. Afterwards touch and gamepad behave normally in Waydroid.
 
 ---
 
@@ -289,7 +289,7 @@ Custom artwork goes in <code>&lt;steam&gt;/userdata/&lt;id&gt;/config/grid/</cod
 | Nix: <code>api.github.com ... 403</code> | GitHub API rate limit | pin revs, or generate and commit a flake.lock |
 | Official images download very slowly | slow SourceForge mirror | download+verify elsewhere and push; or use a multi-connection downloader behind a proxy |
 | overlayfs unavailable | /home is ext4 + casefold | expected; <code>mount_overlays=False</code>, writes into system.img |
-| Touch/gamepad glitchy in Game Mode | Steam Input captures and remaps input | Properties → Controller → Steam Input → Disabled (see §7.1) |
+| Touch/gamepad glitchy in Game Mode | Steam Input not force-enabled, so Deck controls are not mapped for Waydroid | Properties → Controller → Steam Input → Force Enabled (see §7.1) |
 
 ---
 
