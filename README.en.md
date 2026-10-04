@@ -343,6 +343,19 @@ Custom artwork goes in <code>&lt;steam&gt;/userdata/&lt;id&gt;/config/grid/</cod
 
 ---
 
+## 13. Companion plugin: Maa Deck (Decky QAM panel)
+
+Besides the system-side install guide, this repo also ships the **Decky plugin** that turns it into a "farm anytime" setup. Source: [decky-maa/](decky-maa/).
+
+- Start/stop **MAA (maa-cli)** from the Game Mode QAM; basic and advanced modes;
+- The advanced mode ports the task pages of the local GTK console (startup / fight / recruit / infrast / mall / award / daily / roguelike / copilot / SSS / paradox / reclamation), with command preview and a task queue;
+- Drives the game inside the Waydroid container over **ADB**;
+- Ships a **Waydroid session watchdog**: when the session stops it kills the whole MAA process group and clears the queue, so no ghost processes remain.
+
+See [decky-maa/README.md](decky-maa/README.md) for install/build/deploy.
+
+---
+
 ## License / disclaimer
 
 Released into the public domain under the [Unlicense](LICENSE). Use it however you like.

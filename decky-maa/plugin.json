@@ -1,0 +1,17 @@
+{
+  "name": "Maa Deck",
+  "author": "dsh",
+  "flags": [
+    "root"
+  ],
+  "api_version": 1,
+  "publish": {
+    "tags": [
+      "maa",
+      "arknights",
+      "waydroid",
+      "automation"
+    ],
+    "description": "MAA (MaaAssistantArknights) control panel for Steam Deck: drives the game via ADB inside Waydroid, straight from the QAM."
+  }
+}
