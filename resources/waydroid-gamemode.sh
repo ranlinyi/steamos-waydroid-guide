@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Waydroid Game Mode launcher for Steam Deck
+set -euo pipefail
+
+# Game Mode has no visible stderr → log everything for diagnostics.
+LOG="$HOME/.local/share/waydroid/gamemode.log"
+mkdir -p "$(dirname "$LOG")"
+exec >>"$LOG" 2>&1
+printf '\n===== waydroid-gamemode %s =====\n' "$(date)"
+
+# Steam Game Mode injects LD_PRELOAD=gameoverlayrenderer.so (depends on libGL.so.1) and
+# steam-runtime LD_LIBRARY_PATH — both break Nix binaries (cage, waydroid: "libGL.so.1 not
+# found", even bash fails to start). Clear them. cage finds the GPU drivers itself via
+# /run/opengl-driver (targets.genericLinux.gpu), it needs no LD_LIBRARY_PATH.
+# (Reproduced: LD_PRELOAD=overlay → Nix bash fails on libGL.)
+unset LD_PRELOAD LD_LIBRARY_PATH
+
+NIX_BIN="$HOME/.nix-profile/bin"
+# Steam Game Mode launches the script with its own PATH (without ~/.nix-profile/bin) →
+# bare waydroid/wlr-randr are not found inside `cage -- bash` ("command not found").
+# Add NIX_BIN to PATH and export → the nested bash inside cage inherits it and finds Nix binaries.
+export PATH="$NIX_BIN:$PATH"
+WAYDROID="$NIX_BIN/waydroid"
+CAGE="$NIX_BIN/cage"
+RES="${WAYDROID_RES:-1280x800}"   # native Deck resolution; override via env
+
+[[ -x "$WAYDROID" ]] || { echo "FATAL: waydroid not found — run: home-manager switch"; exit 1; }
+[[ -x "$CAGE" ]]     || { echo "FATAL: cage not found — run: home-manager switch"; exit 1; }
+
+# The container is started by systemd at boot (service enabled). In Game Mode there is NO way
+# to enter a sudo/polkit password → do NOT try to start it with sudo (would hang on password
+# prompt — one cause of the infinite logo screen). Require the service already active.
+if ! systemctl is-active --quiet waydroid-container.service; then
+  echo "FATAL: waydroid-container.service is not active (should autostart at boot)"
+  exit 1
+fi
+
+# Cleanup on any exit (normal, SIGTERM from Steam, Ctrl+C)
+cleanup() { "$WAYDROID" session stop &>/dev/null || true; }
+trap cleanup EXIT
+
+# cage = nested Wayland compositor. gamescope fullscreens the cage WINDOW, and Android
+# renders inside cage. A direct show-full-ui does NOT create a gamescope window → gamescope
+# waits forever → Steam logo stuck forever. Both ryanrudolfoba and Bazzite use cage.
+# Inside cage: set output resolution (wlr-randr, auto-detect name) and start the UI.
+# cage in foreground: Steam keeps the "game" running while the script lives; exiting Android
+# → cage exits → trap cleans up the session.
+"$CAGE" -- bash -uc '
+  out=$(wlr-randr 2>/dev/null | awk "NR==1{print \$1; exit}")
+  [ -n "$out" ] && wlr-randr --output "$out" --custom-mode '"$RES"' 2>/dev/null || true
+
+  waydroid show-full-ui &
+  wpid=$!
+
+  # surfaceflinger (inside Android) takes ~15-20s; then set max volume (fix for "no sound").
+  for _ in $(seq 1 30); do pgrep -x surfaceflinger >/dev/null && break; sleep 1; done
+  sleep 5
+  waydroid shell -- cmd media_session volume --stream 3 --set 15 2>/dev/null || true
+  # Gamepad: uevent retrigger — write "add" to /sys/.../input*/event*/uevent →
+  # kernel sends udev event → Android registers the controller (Bazzite pattern).
+  env -u LD_LIBRARY_PATH /usr/bin/sudo /etc/waydroid-fix-controllers 2>/dev/null || true
+
+  wait "$wpid"
+'

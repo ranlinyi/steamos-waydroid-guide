@@ -356,6 +356,8 @@ WAYDROID_RES=1280x720 %command%
 
 安装、构建与部署见 [decky-maa/README.md](decky-maa/README.md)。
 
+本文用到的配套文件（Steam 库美术四图、binder shim 补丁、游戏模式入口脚本、安装脚本本地副本）见 [resources/](resources/)。
+
 ---
 
 ## 许可 / 免责

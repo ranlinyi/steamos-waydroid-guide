@@ -1,0 +1,674 @@
+#!/usr/bin/env bash
+# Waydroid installer for SteamOS
+# Run: waydroid-setup
+set -euo pipefail
+
+NIX_BIN="$HOME/.nix-profile/bin"
+WAYDROID_BIN="$NIX_BIN/waydroid"
+WAYDROID_DATA="$HOME/.local/share/waydroid"
+SCRIPT_DIR="$HOME/waydroid_script"
+WAYDROID_CFG="/var/lib/waydroid/waydroid.cfg"
+IMG="$WAYDROID_DATA/images/system.img"
+
+# Binder: SteamOS kernels since 6.18 (e.g. stable 3.8.28, beta 3.9.x) are built
+# without binder (# CONFIG_ANDROID_BINDER_IPC is not set; 6.15/6.16 had it =y).
+# We build the kernel's OWN in-tree binder from the upstream sources of the EXACT
+# version of the running kernel (e.g. 7.2.7 -> tag v7.2.7 of the stable tree on
+# kernel.org), with a small shim (shim.c: symbols resolved via kallsyms) and no
+# edits to the driver itself. Loaded from root-owned /etc/waydroid-binder/<uname -r>/.
+KREL="$(uname -r)"
+KVER="${KREL%%-*}"                                   # 7.2.7-valve1-1-... -> 7.2.7
+case "$KVER" in *.0) BINDER_SRC_TAG="v${KVER%.0}" ;; *) BINDER_SRC_TAG="v$KVER" ;; esac
+BINDER_ETC_DIR="/etc/waydroid-binder"
+BINDER_KO="$BINDER_ETC_DIR/$KREL/binder_linux.ko"
+BINDER_STAMP="$BINDER_ETC_DIR/$KREL/source.stamp"
+BINDER_SHIM_DIR="$HOME/.local/share/waydroid-setup"  # shim.c + shim.h (from home.nix)
+
+ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
+skip() { printf '\033[33m→\033[0m %s (already done)\n' "$*"; }
+step() { printf '\n\033[1;34m══ %s ══\033[0m\n' "$*"; }
+die()  { printf '\033[31m✗\033[0m %s\n' "$*" >&2; exit 1; }
+
+# Writes a file (to /etc or Waydroid's data dir) only if content/mode changed.
+# mode is a parameter, not hardcoded 644: some callers chmod afterward (+x,
+# 440 for sudoers), and comparing against 644 made those look "different"
+# forever, rewriting them on every run.
+write_file() {
+  local dest="$1" mode="${2:-644}"
+  local tmp; tmp=$(mktemp)
+  cat > "$tmp"
+  if sudo test -f "$dest" && sudo cmp -s "$tmp" "$dest" 2>/dev/null \
+     && [[ "$(sudo stat -c %a "$dest" 2>/dev/null)" == "$mode" ]]; then
+    skip "$dest"; rm -f "$tmp"; return 1
+  fi
+  sudo install -D -m "$mode" "$tmp" "$dest"
+  rm -f "$tmp"
+  ok "Written $dest"
+}
+
+# waydroid.log shows the real error: ext4's casefold feature flag (whole
+# filesystem, not a per-dir chattr +F) blocks overlay mounts. Checked via
+# tune2fs on whatever device backs Waydroid's data, every run — so the script
+# adapts automatically if that ever changes.
+overlayfs_supported() {
+  local dev features
+  dev="$(findmnt -n -o SOURCE --target "$WAYDROID_DATA" 2>/dev/null)" || return 1
+  features="$(sudo tune2fs -l "$dev" 2>/dev/null)" || return 1
+  ! grep -qw casefold <<<"$features"
+}
+
+# Waits until waydroid-container.service actually comes up. The unit is
+# Type=dbus — is-active only becomes true once the process has acquired its
+# BusName, so this is a genuine readiness check, not just "the process hasn't
+# crashed yet". Fails clearly with a helpful pointer instead of silently
+# continuing with a broken service.
+ensure_container_active() {
+  local tries=0
+  until systemctl is-active --quiet waydroid-container.service; do
+    tries=$((tries + 1))
+    if (( tries >= 15 )); then
+      die "waydroid-container.service failed to come up — check: journalctl -xeu waydroid-container.service"
+    fi
+    sleep 1
+  done
+}
+
+# Is binder built into the kernel itself? The option is bool (never an in-tree
+# module); BINDERFS depends on BINDER_IPC, so checking it is enough.
+binder_builtin() {
+  zgrep -q '^CONFIG_ANDROID_BINDERFS=y' /proc/config.gz 2>/dev/null
+}
+
+# A binder_linux module installed on the system by something else (DKMS etc.).
+binder_system_module() {
+  modinfo -n binder_linux &>/dev/null
+}
+
+# Builds binder_linux.ko for the running kernel into directory $1 (no sudo).
+# Headers: the <kernel>-headers package of the same version from Valve's repos
+# (sha256 from the repo database). Driver sources: drivers/android of the same
+# kernel from the stable tree on kernel.org. gcc of the kernel's major version
+# (CONFIG_GCC_VERSION) comes from nixpkgs.
+build_binder_module() {
+  local out="$1" work kpkg kver hpkg mirror repo url desc file sum kdir gcc_major
+  command -v nix >/dev/null || die "nix not found in PATH — needed to build the binder module"
+  [[ -r "$BINDER_SHIM_DIR/shim.c" && -r "$BINDER_SHIM_DIR/shim.h" ]] \
+    || die "shim.c/shim.h missing in $BINDER_SHIM_DIR — run: home-manager switch"
+
+  work="$(mktemp -d "${TMPDIR:-/tmp}/waydroid-binder-XXXXXX")"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$work'; trap - RETURN" RETURN
+
+  read -r kpkg kver < <(pacman -Qo "/usr/lib/modules/$KREL" | awk '{print $(NF-1), $NF}')
+  [[ -n "$kpkg" && -n "$kver" ]] || die "could not determine the kernel package for $KREL"
+  hpkg="$kpkg-headers"
+  mirror="$(grep -m1 '^Server' /etc/pacman.d/mirrorlist | sed 's/^Server *= *//')"
+
+  for repo in $(grep -oE '^\[[^]]+\]' /etc/pacman.conf | tr -d '[]' | grep -vx options); do
+    url="${mirror//\$repo/$repo}"; url="${url//\$arch/x86_64}"
+    curl -fsSL -o "$work/$repo.db" "$url/$repo.db" || continue
+    desc="$(bsdtar -xOf "$work/$repo.db" "$hpkg-$kver/desc" 2>/dev/null)" || true
+    [[ -n "$desc" ]] && break
+  done
+  [[ -n "${desc:-}" ]] || die "package $hpkg-$kver not found in the repos from /etc/pacman.conf"
+  file="$(grep -A1 '^%FILENAME%$' <<<"$desc" | tail -1)"
+  sum="$(grep -A1 '^%SHA256SUM%$' <<<"$desc" | tail -1)"
+
+  # Header cache: keyed by package name (version-specific), content verified
+  # against the sha256 from the repo database. wget -c resumes if the (sometimes
+  # slow) Valve CDN drops, so repeated builds don't re-download the same package.
+  local cache="$HOME/.cache/waydroid-setup"; mkdir -p "$cache"
+  if [[ -f "$cache/$file" ]] && echo "$sum  $cache/$file" | sha256sum -c --quiet 2>/dev/null; then
+    ok "Headers from cache: $file"
+  else
+    ok "Downloading $file ($repo)"
+    wget -q -c --tries=50 --waitretry=3 --retry-connrefused --read-timeout=20 --timeout=30 \
+      -O "$cache/$file" "$url/$file" || die "failed to download headers $file"
+    echo "$sum  $cache/$file" | sha256sum -c --quiet \
+      || { rm -f "$cache/$file"; die "headers sha256 does not match the $repo repo database"; }
+  fi
+  mkdir "$work/hdr"
+  bsdtar -xf "$cache/$file" -C "$work/hdr"
+  kdir="$work/hdr/usr/lib/modules/$KREL/build"
+  [[ -f "$kdir/.config" ]] || die "$file has no headers for $KREL"
+
+  # Driver sources: drivers/android of the SAME kernel from the stable tree on
+  # kernel.org (plain endpoint, no auth): Makefile -> objects -> .c -> recursively
+  # the local "..." headers. This picks up the file set for any version.
+  local base="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/drivers/android"
+  local objs need done_f f inc kobjs
+  mkdir "$work/src"
+  fetch_src() { curl -fsSL "$base/$1?h=$BINDER_SRC_TAG" -o "$work/src/$1"; }
+  ok "Downloading drivers/android ($BINDER_SRC_TAG) from kernel.org"
+  fetch_src Makefile || die "failed to download drivers/android/Makefile for $BINDER_SRC_TAG"
+  objs="$(grep -E '^obj-\$\(CONFIG_ANDROID_BINDER(FS|_IPC)\)' "$work/src/Makefile" \
+          | sed 's/.*+=[[:space:]]*//' | tr ' \t' '\n\n' | grep '\.o$' || true)"
+  [[ -n "$objs" ]] || die "could not parse binder objects from Makefile $BINDER_SRC_TAG"
+  need="$(sed 's/\.o$/.c/' <<<"$objs")"; done_f=""
+  while [[ -n "$need" ]]; do
+    f="$(head -1 <<<"$need")"; need="$(tail -n +2 <<<"$need")"
+    case " $done_f " in *" $f "*) continue ;; esac
+    done_f="$done_f $f"
+    fetch_src "$f" || die "failed to download drivers/android/$f ($BINDER_SRC_TAG)"
+    for inc in $(grep -oE '#include[[:space:]]*"[^"]+"' "$work/src/$f" | sed -E 's/.*"([^"]+)".*/\1/'); do
+      case "$inc" in */*) ;; *) need="$need"$'\n'"$inc" ;; esac
+    done
+  done
+
+  # Our glue: shim + a generated Kbuild (the driver itself is unmodified).
+  cp "$BINDER_SHIM_DIR/shim.c" "$BINDER_SHIM_DIR/shim.h" "$work/src/"
+  rm -f "$work/src/Makefile"                        # build with our own Kbuild
+  kobjs="$(tr '\n' ' ' <<<"$objs")"
+  cat > "$work/src/Kbuild" <<KBUILD
+ccflags-y += -I\$(src) -include \$(src)/shim.h \\
+	-DCONFIG_ANDROID_BINDER_IPC=1 -DCONFIG_ANDROID_BINDERFS=1 -DCONFIG_ANDROID_BINDER_DEVICES='"binder"'
+CFLAGS_binder.o += -Dinit_module=binder_orig_init_module -D__inittest=binder_orig_inittest
+CFLAGS_binder_alloc.o += -Ddebug_mask=alloc_debug_mask
+obj-m := binder_linux.o
+binder_linux-y := ${kobjs}shim.o
+KBUILD
+
+  gcc_major="$(sed -n 's/^CONFIG_GCC_VERSION=\([0-9]*\)[0-9]\{4\}$/\1/p' "$kdir/.config")"
+  [[ -n "$gcc_major" ]] || die "could not read the kernel's gcc version from $kdir/.config"
+  ok "Building binder_linux (gcc$gcc_major from nixpkgs)"
+  nix shell "nixpkgs#gcc$gcc_major" nixpkgs#gnumake nixpkgs#binutils nixpkgs#elfutils nixpkgs#pahole \
+    -c make -C "$kdir" M="$work/src" modules >"$work/build.log" 2>&1 \
+    || { cat "$work/build.log" >&2; die "binder_linux build failed (if modpost says 'undefined!' — add the symbols to shim.c)"; }
+
+  # vermagic starts with the kernel release — otherwise insmod refuses it.
+  [[ "$(modinfo -F vermagic "$work/src/binder_linux.ko" | awk '{print $1}')" == "$KREL" ]] \
+    || die "built binder_linux.ko does not match kernel $KREL (vermagic)"
+  cp "$work/src/binder_linux.ko" "$out/binder_linux.ko"
+}
+
+# ── 1. Check dependencies ─────────────────────────────────────────────────
+step "1/8  Check dependencies"
+[[ -x "$WAYDROID_BIN" ]]       || die "waydroid not found — run: home-manager switch"
+[[ -x "$NIX_BIN/lxc-start" ]] || die "lxc not found — run: home-manager switch"
+ok "waydroid and lxc found"
+
+# ── 2. Binder ─────────────────────────────────────────────────────────────
+# The mode decides how the container unit loads binder at start (ExecStartPre):
+#   builtin — built into the kernel: nothing to build or load;
+#   system  — a binder_linux module is already on the system: modprobe;
+#   ours    — build our own for `uname -r`, insmod from /etc/waydroid-binder/%v/.
+# %v in systemd = running kernel release: after a kernel update the unit fails on
+# the missing .ko with a clear error — fixed by re-running this script.
+step "2/8  Binder (kernel $KREL)"
+if binder_builtin; then
+  BINDER_MODE=builtin
+  skip "binder is built into the kernel — no module needed"
+elif binder_system_module; then
+  BINDER_MODE=system
+  skip "binder_linux module already on the system ($(modinfo -n binder_linux)) — no build needed"
+else
+  BINDER_MODE=ours
+  # Rebuild only if there is no module for this kernel from the same source.
+  stamp="tag=$BINDER_SRC_TAG shim=$(sha256sum "$BINDER_SHIM_DIR/shim.c" 2>/dev/null | cut -d' ' -f1)"
+  if [[ -f "$BINDER_KO" ]] && [[ "$(cat "$BINDER_STAMP" 2>/dev/null)" == "$stamp" ]]; then
+    skip "$BINDER_KO built from the same source"
+  else
+    build_dir="$(mktemp -d "${TMPDIR:-/tmp}/waydroid-binder-out-XXXXXX")"
+    build_binder_module "$build_dir"
+    write_file "$BINDER_KO" 644 < "$build_dir/binder_linux.ko" || true
+    printf '%s\n' "$stamp" | write_file "$BINDER_STAMP" 644 || true
+    rm -rf "$build_dir"
+    # A loaded module can't be swapped live (no rmmod while the container has
+    # binderfs mounted) — the new build is picked up on the next boot.
+    if grep -qw binder /proc/filesystems; then
+      printf '\033[33m→\033[0m binder_linux already loaded — the new build takes effect after reboot\n'
+    fi
+  fi
+  # Modules for previous kernels are no longer needed (one kernel per slot).
+  sudo find "$BINDER_ETC_DIR" -mindepth 1 -maxdepth 1 -type d ! -name "$KREL" \
+    -exec rm -rf {} + -exec printf '\033[32m✓\033[0m Removed module for old kernel: %s\n' {} \;
+fi
+
+if grep -qw binder /proc/filesystems; then
+  skip "binderfs available in the kernel"
+else
+  case "$BINDER_MODE" in
+    system) sudo modprobe binder_linux ;;
+    ours)   sudo insmod "$BINDER_KO" ;;
+  esac
+  grep -qw binder /proc/filesystems || die "binderfs unavailable after loading the module — check: sudo dmesg | tail"
+  ok "binder_linux module loaded"
+fi
+
+case "$BINDER_MODE" in
+  builtin) BINDER_EXEC_START_PRE="" ;;
+  system)  BINDER_EXEC_START_PRE="ExecStartPre=/usr/bin/modprobe binder_linux" ;;
+  ours)    BINDER_EXEC_START_PRE="ExecStartPre=/bin/sh -c 'grep -qw binder /proc/filesystems || exec /usr/bin/insmod $BINDER_ETC_DIR/%v/binder_linux.ko'" ;;
+esac
+
+# ── 3. /etc files ─────────────────────────────────────────────────────────
+step "3/8  /etc configs (systemd, D-Bus, gbinder)"
+
+# SteamOS atomic updates (RAUC) wipe /etc except the keep-list: base
+# /usr/lib/rauc/atomic-update-keep.conf + user /etc/atomic-update.conf.d/*.conf.
+# The base list already covers /etc/systemd/system/*.service and *.wants/**
+# (our unit + its enable symlink survive), but NOT dbus/gbinder/sudoers/firewalld
+# — without listing them Waydroid breaks after every update ("AccessDenied:
+# Request to own name refused by policy"). The drop-in matches the keep-list
+# itself, so it's self-sustaining.
+write_file /etc/atomic-update.conf.d/waydroid.conf <<'KEEPLIST' || true
+# Waydroid files RAUC would otherwise wipe on a SteamOS atomic update.
+# The systemd unit + enable symlink aren't needed here — the base keep-list covers them.
+/etc/dbus-1/system.d/id.waydro.Container.conf
+/etc/gbinder.d/waydroid.conf
+/etc/waydroid-fix-controllers
+/etc/sudoers.d/zz-waydroid-fix-controllers
+/etc/firewalld/zones/trusted.xml
+/etc/waydroid-binder/**
+KEEPLIST
+
+RELOAD_SYSTEMD=false
+RELOAD_DBUS=false
+
+if write_file /etc/systemd/system/waydroid-container.service <<UNIT
+[Unit]
+Description=Waydroid Container
+After=network.target dbus.service
+
+[Service]
+Type=dbus
+BusName=id.waydro.Container
+Environment=PATH=$NIX_BIN:/usr/bin:/bin
+$BINDER_EXEC_START_PRE
+ExecStart=$WAYDROID_BIN container start
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+then RELOAD_SYSTEMD=true; fi
+
+if write_file /etc/dbus-1/system.d/id.waydro.Container.conf <<DBUS
+<?xml version="1.0"?>
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <policy user="root">
+    <allow own="id.waydro.Container"/>
+  </policy>
+  <policy context="default">
+    <allow send_destination="id.waydro.Container"/>
+    <allow receive_sender="id.waydro.Container"/>
+  </policy>
+</busconfig>
+DBUS
+then RELOAD_DBUS=true; fi
+
+RELOAD_GBINDER=false
+if write_file /etc/gbinder.d/waydroid.conf <<GBINDER
+[Protocol]
+/dev/anbox-binder = aidl2
+/dev/anbox-vndbinder = aidl2
+/dev/anbox-hwbinder = hidl
+
+[ServiceManager]
+/dev/anbox-binder = aidl2
+/dev/anbox-vndbinder = aidl2
+/dev/anbox-hwbinder = hidl
+GBINDER
+then RELOAD_GBINDER=true; fi
+
+$RELOAD_SYSTEMD && { sudo systemctl daemon-reload; ok "daemon-reload"; }
+$RELOAD_DBUS    && { sudo systemctl reload dbus.service; ok "D-Bus reloaded"; }
+
+# systemd/dbus configs apply live (daemon-reload / reload are wired to
+# SIGHUP+notify-reload, no restart needed). But the container process itself
+# only reads gbinder.conf and the BusName policy at its OWN startup — if it was
+# already running (e.g. after a previous install and a host reboot), it won't
+# see the new config without a restart. Restart once if any of the three
+# changed AND the container is already active; if nothing changed, move on
+# quietly. A host reboot is never required for any of these files.
+if { $RELOAD_SYSTEMD || $RELOAD_DBUS || $RELOAD_GBINDER; } && systemctl is-active --quiet waydroid-container.service; then
+  sudo systemctl restart waydroid-container.service
+  ensure_container_active
+  ok "waydroid-container.service restarted (picking up new config)"
+fi
+
+# ── 4. Android data: directory + symlink ──────────────────────────────────
+step "4/8  Data directory and /var/lib/waydroid symlink"
+mkdir -p "$WAYDROID_DATA"
+
+if [[ "$(readlink /var/lib/waydroid 2>/dev/null)" == "$WAYDROID_DATA" ]]; then
+  skip "/var/lib/waydroid → $WAYDROID_DATA"
+else
+  sudo rm -rf /var/lib/waydroid
+  sudo ln -sf "$WAYDROID_DATA" /var/lib/waydroid
+  ok "Symlink /var/lib/waydroid → $WAYDROID_DATA"
+fi
+
+# ── 5. waydroid init ──────────────────────────────────────────────────────
+# Init is done only when BOTH images exist. If the vendor download was interrupted
+# (SourceForge resets connections), only system.img and a cfg with
+# vendor_datetime = 0 are left — Waydroid then reports "not initialized", and a
+# plain `init` on an existing cfg won't fetch the rest, hence -f.
+step "5/8  waydroid init (Android 13 + GAPPS, ~3 GB)"
+if [[ -f "$WAYDROID_DATA/images/system.img" && -f "$WAYDROID_DATA/images/vendor.img" ]]; then
+  skip "Android images already downloaded"
+else
+  init_args=(init -s GAPPS)
+  if [[ -e "$WAYDROID_DATA/images/system.img" || -e "$WAYDROID_DATA/images/vendor.img" || -e "$WAYDROID_CFG" ]]; then
+    init_args+=(-f)
+    printf '\033[33m→\033[0m Previous init did not finish (an image is missing) — rerunning with -f\n'
+  fi
+  sudo PATH="$NIX_BIN:$PATH" "$WAYDROID_BIN" "${init_args[@]}" \
+    || die "waydroid init failed (interrupted download?) — just run waydroid-setup again"
+  [[ -f "$WAYDROID_DATA/images/system.img" && -f "$WAYDROID_DATA/images/vendor.img" ]] \
+    || { [[ -f /etc/waydroid-extra/images/system.img && -f /etc/waydroid-extra/images/vendor.img ]] || die "system.img or vendor.img missing after waydroid init"; }
+  ok "waydroid init complete"
+fi
+
+if [[ "$(stat -c %U "$WAYDROID_DATA")" != "$(whoami)" ]]; then
+  sudo chown "$(whoami):$(whoami)" "$WAYDROID_DATA"
+  ok "chown $(whoami) $WAYDROID_DATA"
+else
+  skip "$WAYDROID_DATA owner already correct"
+fi
+
+# Gamepad: Android only detects input devices (including gamepads) when Waydroid
+# forwards udev/uevent events to the container — enabled by these props.
+# Source: ryanrudolfoba/extras/waydroid_base.prop. Applied on session start.
+#
+# Written to both: waydroid_base.prop for immediate effect, and waydroid.cfg's
+# [properties] section because `waydroid upgrade` (runs internally after every
+# libhoudini install) fully rewrites base.prop from cfg[properties] alone — a
+# prop only appended to the file gets silently wiped on the next install.
+for prop in persist.waydroid.udev=true persist.waydroid.uevent=true; do
+  key="${prop%%=*}"
+
+  if grep -qxF "$prop" "$WAYDROID_DATA/waydroid_base.prop" 2>/dev/null; then
+    skip "prop $prop in waydroid_base.prop"
+  else
+    echo "$prop" | sudo tee -a "$WAYDROID_DATA/waydroid_base.prop" >/dev/null
+    ok "prop $prop → waydroid_base.prop"
+  fi
+
+  if sudo grep -qxE "$key[[:space:]]*=[[:space:]]*true" "$WAYDROID_CFG" 2>/dev/null; then
+    skip "prop $key in waydroid.cfg [properties]"
+  else
+    sudo sed -i "/^\[properties\]/a $key = true" "$WAYDROID_CFG"
+    ok "prop $key → waydroid.cfg [properties] (survives waydroid upgrade)"
+  fi
+done
+
+# Sync mount_overlays to what this filesystem can actually do, before the
+# kl-fix and libhoudini (step 7) — both branch on it below.
+if overlayfs_supported; then
+  if grep -q '^mount_overlays = False$' "$WAYDROID_CFG" 2>/dev/null; then
+    sudo sed -i 's/^mount_overlays = False$/mount_overlays = True/' "$WAYDROID_CFG"
+    ok "overlayfs supported — mount_overlays enabled"
+  else
+    skip "overlayfs supported, mount_overlays already enabled"
+  fi
+else
+  if grep -q '^mount_overlays = True$' "$WAYDROID_CFG" 2>/dev/null; then
+    sudo sed -i 's/^mount_overlays = True$/mount_overlays = False/' "$WAYDROID_CFG"
+    ok "overlayfs not supported — mount_overlays disabled"
+  else
+    skip "overlayfs not supported, mount_overlays already disabled"
+  fi
+fi
+
+# Right stick: Steam creates a virtual gamepad vendor=0x28de product=0x11ff (Valve).
+# Android looks for Vendor_28de_Product_11ff.kl — not found → falls back to Generic.kl,
+# which maps ABS_RX→AXIS_RX, ABS_RY→AXIS_RY. Most games expect the right stick on
+# AXIS_Z/AXIS_RZ (like a real Xbox 360, Vendor_045e_Product_028e.kl).
+KL_PATH="system/usr/keylayout/Vendor_28de_Product_11ff.kl"
+# Content mirrors Vendor_045e_Product_028e.kl (Xbox 360).
+# ABS_RX(0x03)→Z, ABS_RY(0x04)→RZ — what Android games expect from the right stick.
+read -r -d "" KL_CONTENT << 'KLEOF' || true
+key 304   BUTTON_A
+key 305   BUTTON_B
+key 307   BUTTON_X
+key 308   BUTTON_Y
+key 310   BUTTON_L1
+key 311   BUTTON_R1
+key 317   BUTTON_THUMBL
+key 318   BUTTON_THUMBR
+axis 0x00 X flat 4096
+axis 0x01 Y flat 4096
+axis 0x03 Z flat 4096
+axis 0x04 RZ flat 4096
+axis 0x02 LTRIGGER
+axis 0x05 RTRIGGER
+axis 0x10 HAT_X
+axis 0x11 HAT_Y
+key 314   BUTTON_SELECT
+key 316   BUTTON_MODE
+key 315   BUTTON_START
+KLEOF
+
+if grep -q '^mount_overlays = True$' "$WAYDROID_CFG" 2>/dev/null; then
+  # Overlay supported — Bazzite-style: plain file in overlay/ (extra lowerdir,
+  # not upperdir) — no resize2fs/loop-mount/debugfs, survives `waydroid upgrade`.
+  printf '%s\n' "$KL_CONTENT" | write_file "$WAYDROID_DATA/overlay/$KL_PATH" 644
+else
+  # Overlay not supported — write kl directly into system.img.
+  # Already-done check: debugfs reads the ext4 image directly without mounting and
+  # without stopping the container — system.img is mounted inside the lxc
+  # namespace and isn't accessible via the host rootfs. Checks not just whether
+  # the file exists, but its SIZE too: if a previous run failed with "no space
+  # left" right after creating the file but before writing its content, a
+  # zero-size stub file would remain — "Type: regular" matches that too, and
+  # without the Size check the script would forever consider this already done.
+  KL_STAT="$(debugfs -R "stat /$KL_PATH" "$IMG" 2>/dev/null)"
+  # head -1: debugfs prints "Size:" twice — once for the real file size
+  # (User/Group/Project/Size line), and again on the "Fragment: ... Size: 0"
+  # line (a legacy ext2 field, always 0). Without head -1 both values got
+  # concatenated via newline → "392\n0" → arithmetic error in the comparison
+  # below. || true: on a truly fresh image the path doesn't exist at all (not
+  # a zero-size stub) → KL_STAT is empty → grep finds no "Size:" → exit 1 →
+  # set -e silently kills the script right here, with no error printed at all.
+  KL_SIZE="$(grep -oE 'Size: [0-9]+' <<<"$KL_STAT" | head -1 | grep -oE '[0-9]+')" || true
+  if grep -q "Type: regular" <<<"$KL_STAT" && [[ "${KL_SIZE:-0}" -gt 0 ]]; then
+    skip "$KL_PATH"
+  else
+    WAS_ACTIVE=false
+    if systemctl is-active --quiet waydroid-container.service 2>/dev/null; then
+      WAS_ACTIVE=true
+      sudo systemctl stop waydroid-container.service && sleep 2
+    fi
+
+    # Different LineageOS builds ship with different amounts of free space inside
+    # system.img — sometimes it's zero (that's exactly what happened on a fresh
+    # reinstall: 2.5G/2.5G, 100%, 0 free blocks). Don't rely on luck for any
+    # particular build: count free blocks ahead of time and grow the image
+    # idempotently BEFORE attempting the write, instead of reacting to a failed tee.
+    FREE_KB="$(dumpe2fs -h "$IMG" 2>/dev/null | awk -F: '
+      /Free blocks/ { gsub(/ /,"",$2); free=$2 }
+      /Block size/  { gsub(/ /,"",$2); bs=$2 }
+      END { if (bs) print free * bs / 1024; else print 0 }')"
+    if [[ "${FREE_KB:-0}" -lt 4096 ]]; then
+      # e2fsck exit code 1 = "errors corrected" — that's success, not a failure
+      # (see man e2fsck).
+      sudo e2fsck -fy "$IMG" >/dev/null || true
+      sudo truncate -s +32M "$IMG"
+      sudo resize2fs "$IMG" >/dev/null
+      ok "system.img grown by 32M (had ${FREE_KB:-0}KB free)"
+    fi
+
+    TMP_MNT="$(mktemp -d /tmp/waydroid-sys-XXXXXX)"
+    sudo mount -o rw,loop "$IMG" "$TMP_MNT"
+    printf '%s\n' "$KL_CONTENT" | sudo tee "$TMP_MNT/$KL_PATH" >/dev/null
+    sudo umount "$TMP_MNT" && rmdir "$TMP_MNT"
+    if $WAS_ACTIVE; then
+      sudo systemctl start waydroid-container.service
+      ensure_container_active
+    fi
+    ok "$KL_PATH → Android system.img"
+  fi
+fi
+
+# ── 6. firewalld ──────────────────────────────────────────────────────────
+step "6/8  firewalld (internet for Android)"
+sudo systemctl enable --now firewalld
+
+fwadd_iface() {
+  if ! sudo firewall-cmd --permanent --zone="$1" --query-interface="$2" &>/dev/null; then
+    sudo firewall-cmd --permanent --zone="$1" --add-interface="$2"
+    ok "firewall: +interface $2 → zone $1"
+  else
+    skip "firewall: interface $2 in zone $1"
+  fi
+}
+fwadd_port() {
+  if ! sudo firewall-cmd --permanent --zone="$1" --query-port="$2" &>/dev/null; then
+    sudo firewall-cmd --permanent --zone="$1" --add-port="$2"
+    ok "firewall: +port $2 → zone $1"
+  else
+    skip "firewall: port $2 in zone $1"
+  fi
+}
+fwadd_masq() {
+  if ! sudo firewall-cmd --permanent --zone="$1" --query-masquerade &>/dev/null; then
+    sudo firewall-cmd --permanent --zone="$1" --add-masquerade
+    ok "firewall: +masquerade → zone $1"
+  else
+    skip "firewall: masquerade in zone $1"
+  fi
+}
+
+fwadd_iface trusted waydroid0
+fwadd_port  trusted 53/udp
+fwadd_port  trusted 67/udp
+fwadd_masq  trusted
+sudo firewall-cmd --reload
+ok "firewall-cmd --reload"
+
+# ── 7. Enable service ─────────────────────────────────────────────────────
+step "7/8  systemctl enable waydroid-container"
+if systemctl is-enabled --quiet waydroid-container.service 2>/dev/null; then
+  skip "waydroid-container.service already enabled"
+else
+  sudo systemctl enable waydroid-container.service
+  ok "waydroid-container.service enabled"
+fi
+
+# Gamepad: uevent retrigger (Bazzite pattern).
+# udev=true/uevent=true props enable forwarding, but Android may miss the controller —
+# the "add" event arrived before forwarding started. Writing "add" to sysfs manually
+# makes the kernel resend the udev event → Android registers the device.
+# Script and sudoers in /etc/ → overlay → /var → survive SteamOS updates.
+#
+# if, not `|| true` — need the real status for the honest report below.
+FIXCTL_CHANGED=false
+if write_file /etc/waydroid-fix-controllers 755 <<'FIXSCRIPT'
+#!/bin/bash
+echo add | tee /sys/devices/virtual/input/input*/event*/uevent >/dev/null 2>&1 || true
+FIXSCRIPT
+then FIXCTL_CHANGED=true; fi
+
+# IMPORTANT: the filename must sort after wheel/wheel-prepare-oobe-test alphabetically —
+# otherwise %wheel ALL=(ALL) ALL overrides our NOPASSWD (last rule wins).
+# zz-... is guaranteed to be last among all SteamOS sudoers.d files.
+sudo rm -f /etc/sudoers.d/waydroid-fix-controllers 2>/dev/null || true
+if write_file /etc/sudoers.d/zz-waydroid-fix-controllers 440 <<SUDOERS
+deck ALL=(ALL) NOPASSWD: /etc/waydroid-fix-controllers
+SUDOERS
+then FIXCTL_CHANGED=true; fi
+
+if $FIXCTL_CHANGED; then
+  ok "fix-controllers: /etc/waydroid-fix-controllers + sudoers (zz-...)"
+else
+  skip "fix-controllers: /etc/waydroid-fix-controllers + sudoers (zz-...)"
+fi
+
+# ── 8. libhoudini (ARM translation) ──────────────────────────────────────
+step "8/8  libhoudini — ARM translation"
+
+# mount_overlays was synced in step 5/8 — install_app() branches on the same
+# flag, so check the real file in the same place it would write it, not
+# ro.dalvik.vm.native.bridge (waydroid init sets that regardless of whether
+# libhoudini.so was actually copied in).
+houdini_installed() {
+  if grep -q '^mount_overlays = True$' "$WAYDROID_CFG" 2>/dev/null; then
+    [[ -s "$WAYDROID_DATA/overlay/system/lib64/libhoudini.so" ]]
+    return
+  fi
+  local st size
+  st="$(debugfs -R "stat /system/lib64/libhoudini.so" "$IMG" 2>/dev/null)"
+  size="$(grep -oE 'Size: [0-9]+' <<<"$st" | head -1 | grep -oE '[0-9]+')" || true
+  grep -q "Type: regular" <<<"$st" && [[ "${size:-0}" -gt 0 ]]
+}
+
+if houdini_installed; then
+  skip "libhoudini already installed"
+else
+  if [[ ! -d "$SCRIPT_DIR/.git" ]]; then
+    git clone https://github.com/casualsnek/waydroid_script "$SCRIPT_DIR"
+    ok "waydroid_script cloned"
+  else
+    skip "waydroid_script already cloned"
+  fi
+
+  if [[ ! -d "$SCRIPT_DIR/venv" ]]; then
+    python3 -m venv "$SCRIPT_DIR/venv"
+    "$SCRIPT_DIR/venv/bin/pip" install -q -r "$SCRIPT_DIR/requirements.txt"
+    ok "Python venv created"
+  else
+    skip "Python venv already created"
+  fi
+
+  CONTAINER_PY="$SCRIPT_DIR/tools/container.py"
+  # Check the exact patched line — upstream's own upgrade() already contains
+  # an unrelated ignore=r"...", so a loose substring check always false-
+  # positives as "patched". The patch itself isn't optional: `waydroid
+  # container stop` always writes to stderr, and their run() raises on any
+  # non-empty stderr regardless of exit code.
+  PATCHED_STOP='run(["waydroid", "container", "stop"], ignore=r"\[.*\] Stopping container")'
+  if grep -qF "$PATCHED_STOP" "$CONTAINER_PY" 2>/dev/null; then
+    skip "container.py patch already applied"
+  else
+    python3 - "$CONTAINER_PY" <<'PYEOF'
+import sys
+path = sys.argv[1]
+content = open(path).read()
+old = 'run(["waydroid", "container", "stop"])'
+new = 'run(["waydroid", "container", "stop"], ignore=r"\\[.*\\] Stopping container")'
+if old not in content:
+    print("WARN: pattern not found — upstream may have changed")
+    sys.exit(0)
+open(path, 'w').write(content.replace(old, new, 1))
+PYEOF
+    # Silently exits 0 without patching if upstream reformatted `old` — verify
+    # the result instead of trusting the exit code.
+    grep -qF "$PATCHED_STOP" "$CONTAINER_PY" 2>/dev/null ||
+      die "container.py patch didn't take (upstream may have changed stop()) — check $CONTAINER_PY manually"
+    ok "container.py patch applied"
+  fi
+
+  # Don't pre-start the service: install_app() manages container stop/start
+  # itself. Starting it first breaks their internal mount() — verified live,
+  # libhoudini.so silently fails to land when the service is already active.
+  sudo PATH="$NIX_BIN:$PATH" "$SCRIPT_DIR/venv/bin/python3" "$SCRIPT_DIR/main.py" install libhoudini
+
+  # "installation finished" doesn't mean it actually landed — verify on disk.
+  houdini_installed || die "libhoudini reported installed but /system/lib64/libhoudini.so is missing — see install output above"
+  ok "libhoudini installed (verified on disk)"
+fi
+
+# ── Final check ────────────────────────────────────────────────────────────
+# Unconditional restart rather than "start only if inactive" — guarantees the
+# LXC container and system.img/vendor.img mounts are fresh with every fix
+# above applied, instead of relying on each step's own restore logic.
+sudo systemctl restart waydroid-container.service
+ensure_container_active
+ok "waydroid-container.service restarted — all fixes guaranteed to be applied"
+
+# ── Done ──────────────────────────────────────────────────────────────────
+printf '\n\033[32m✓ Setup complete!\033[0m\n\n'
+printf '  Launch Android:\n'
+printf '    waydroid session start &\n'
+printf '    sleep 8 && waydroid show-full-ui\n\n'
+printf '  Reminder: BIOS → UMA Frame Buffer Size → 4G (for games)\n\n'
+printf '  \033[33mRe-run this script after:\033[0m\n'
+printf '    - waydroid upgrade — fully rewrites system.img/vendor.img and wipes the\n'
+printf '      overlay, the right-stick .kl fix and libhoudini get lost, need to reapply\n'
+printf '    - a SteamOS update — /etc configs are now under the RAUC keep-list\n'
+printf '      (/etc/atomic-update.conf.d/waydroid.conf) and survive; if something\n'
+printf '      is off, the script is idempotent and will restore it\n\n'
