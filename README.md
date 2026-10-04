@@ -1,5 +1,7 @@
 # 在 SteamOS / Steam Deck 上安装原生 Waydroid（Nix 方案）
 
+**简体中文** ｜ [English (README.en.md)](README.en.md)
+
 > 一份可直接照做的实操指南，基于 SteamOS 3.8.28（内核 6.18.50-valve2）实测整理。
 > 目标：在**游戏模式**下运行原生 Waydroid（官方 Android 13 + GAPPS），带 ARM 转译，并通过 ADB 供 MAA 之类的自动化工具使用。
 > 特点：**不修改只读系统分区**，尽量跨 SteamOS 更新存活；镜像与依赖可在快的机器上预取再推过去。
@@ -234,6 +236,7 @@ WAYDROID_RES=1280x720 %command%
 ~~~
 
 > 已知现象：游戏模式入口**第一次常失败、第二次才成**（会话/容器冷启动时序）。日志一般在 <code>~/.local/share/waydroid/gamemode.log</code>。
+
 ### 7.1 必须：禁用 Steam 输入（否则触屏/操作异常）
 
 游戏模式下**直接用手柄/触屏操作 Waydroid 会出现异常**：触屏点击错位、拖拽不跟手、按键无响应等。原因是 **Steam 输入（Steam Input）会接管并重映射手柄与触控事件**，Waydroid 收到的不是原始输入。
@@ -301,14 +304,42 @@ WAYDROID_RES=1280x720 %command%
 
 ---
 
-## 12. 参考
+## 12. 资源与下载链接
 
-- Waydroid：https://waydro.id/ ；属性文档：https://docs.waydro.id/usage/waydroid-prop-options
-- Waydroid 扩展脚本（libhoudini/GApps）：https://github.com/casualsnek/waydroid_script
+**Waydroid**
+
+- 官网：https://waydro.id/ ；文档：https://docs.waydro.id/
+- 属性文档（分辨率等）：https://docs.waydro.id/usage/waydroid-prop-options
+- 官方镜像 OTA 元数据（JSON 内含 sha256 与下载地址）：
+  - Android 13 VANILLA：https://ota.waydro.id/system/lineage/waydroid_x86_64/VANILLA.json
+  - Android 13 GAPPS：https://ota.waydro.id/system/lineage/waydroid_x86_64/GAPPS.json
+  - vendor MAINLINE：https://ota.waydro.id/vendor/waydroid_x86_64/MAINLINE.json
+- 镜像文件目录（SourceForge）：https://sourceforge.net/projects/waydroid/files/images/
+- 社区构建（Android 13–16 / Android TV）：https://github.com/WayDroid-ATV/waydroid-builds 、https://github.com/WayDroid-ATV/waydroid-androidtv-builds
+- 扩展脚本（libhoudini / GApps / Magisk / Widevine）：https://github.com/casualsnek/waydroid_script
+- 游戏模式启动器：https://github.com/chenx-dust/waydroid-launcher
+
+**SteamOS / Nix**
+
+- Nix 官方 installer：https://github.com/NixOS/nix-installer （入口：https://artifacts.nixos.org/nix-installer）
 - SteamOS Waydroid Nix 方案：https://github.com/Labaman/SteamOS-Waydroid-Nix-Installer
-- 游戏模式 cage 启动器：https://github.com/chenx-dust/waydroid-launcher
-- Nix 官方 installer：https://github.com/NixOS/nix-installer
-- Steam 自定义美术（grid/hero/logo）：<code>userdata/&lt;id&gt;/config/grid/</code>
+- Bazzite（gamescope 下的参考实现）：https://github.com/ublue-os/bazzite
+
+**MAA / 自动化**
+
+- MAA 主仓库：https://github.com/MaaAssistantArknights/MaaAssistantArknights
+- maa-cli：https://github.com/MaaAssistantArknights/maa-cli
+- MAA 文档：https://docs.maa.plus/
+
+**Decky / 插件**
+
+- Decky Loader：https://github.com/SteamDeckHomebrew/decky-loader
+- 插件模板：https://github.com/SteamDeckHomebrew/decky-plugin-template
+
+**美术素材**
+
+- SteamGridDB：https://www.steamgriddb.com/
+- Steam 自定义美术目录：<code>userdata/&lt;id&gt;/config/grid/</code>
 
 ---
 
