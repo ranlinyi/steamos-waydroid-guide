@@ -2,6 +2,8 @@
 
 **简体中文** ｜ [English (README.en.md)](README.en.md)
 
+> 本仓库 = **安装指南** + **配套 Decky 插件** [Maa Deck](decky-maa/)：在游戏模式 QAM 里控制 MAA 挂机（见 §13）。
+
 > 一份可直接照做的实操指南，基于 SteamOS 3.8.28（内核 6.18.50-valve2）实测整理。
 > 目标：在**游戏模式**下运行原生 Waydroid（官方 Android 13 + GAPPS），带 ARM 转译，并通过 ADB 供 MAA 之类的自动化工具使用。
 > 特点：**不修改只读系统分区**，尽量跨 SteamOS 更新存活；镜像与依赖可在快的机器上预取再推过去。

@@ -2,6 +2,8 @@
 
 [简体中文 (README.md)](README.md) ｜ **English**
 
+> This repo = **install guide** + the **Maa Deck** Decky plugin for controlling MAA from the Game Mode QAM (source: [decky-maa/](decky-maa/), see §13).
+
 > A copy-paste-friendly hands-on guide, based on real testing on **SteamOS 3.8.28** (kernel <code>6.18.50-valve2</code>).
 > Goal: run **native Waydroid** (official Android 13 + GApps) in **Game Mode**, with ARM translation, and drive it over **ADB** from automation tools such as MAA.
 > Design: **do not modify the read-only system partition**, try to survive SteamOS updates, and allow pre-fetching images/dependencies on a fast machine.
