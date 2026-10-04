@@ -367,6 +367,8 @@ Besides the system-side install guide, this repo also ships the **Decky plugin**
 
 See [decky-maa/README.md](decky-maa/README.md) for install/build/deploy.
 
+> The plugin is referenced as a **git submodule** (standalone repo: [ranlinyi/decky-maa](https://github.com/ranlinyi/decky-maa)). Clone this repo with <code>--recursive</code>, or run <code>git submodule update --init --recursive</code> afterwards.
+
 Companion files referenced by this guide (Steam grid artwork, the binder shim patch, the Game Mode launcher, and the local copy of the setup script) live in [resources/](resources/).
 
 ---

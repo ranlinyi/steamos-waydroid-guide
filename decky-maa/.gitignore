@@ -1,6 +1,0 @@
-node_modules/
-dist/*.map
-__pycache__/
-*.pyc
-bin/maa
-bin/adb

@@ -367,6 +367,8 @@ WAYDROID_RES=1280x720 %command%
 
 安装、构建与部署见 [decky-maa/README.md](decky-maa/README.md)。
 
+> 插件以 **git submodule** 形式引用（独立仓库：[ranlinyi/decky-maa](https://github.com/ranlinyi/decky-maa)）。克隆本仓库时请加 <code>--recursive</code>，或事后执行 <code>git submodule update --init --recursive</code>。
+
 本文用到的配套文件（Steam 库美术四图、binder shim 补丁、游戏模式入口脚本、安装脚本本地副本）见 [resources/](resources/)。
 
 ---

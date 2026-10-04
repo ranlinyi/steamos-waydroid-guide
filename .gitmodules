@@ -1,0 +1,3 @@
+[submodule "decky-maa"]
+	path = decky-maa
+	url = git@github.com:ranlinyi/decky-maa.git
