@@ -263,6 +263,44 @@ You must **force-enable Steam Input** for this shortcut so Steam maps the Deck's
 
 > Depending on the client version the dropdown may show Default / Force Enabled / Force Disabled; choose Force Enabled, **not** Disabled. Afterwards touch and gamepad behave normally in Waydroid.
 
+### 7.2 Multi-touch degrading to a single pointer: cause and fix
+
+**Symptom**: in Game Mode Waydroid has only "single touch" (like a mouse pointer) — two-finger pinch or multi-finger gestures do nothing — while the same Waydroid is fully multi-touch in Desktop Mode.
+
+**Cause** (measured, not guessed): Steam treats a non-Steam shortcut as a "game without touch support" and writes the X11 property `STEAM_TOUCH_CLICK_MODE = 1` (1 = left, i.e. "touch acts as the left mouse button") on the Xwayland root. gamescope reads it and overrides its `touch_click_mode` (the `--default-touch-mode 4` flag is only a default), so **every touch is turned into a single mouse pointer**. cage therefore never receives `wl_touch`; Waydroid's `hwcomposer` only writes the pointer into `/dev/input/wl_pointer_events`, and Android sees just one pointer.
+
+Evidence (read-only, reproducible):
+
+- `DISPLAY=:0 xprop -root STEAM_TOUCH_CLICK_MODE` → runtime value `1` (not 4);
+- at that moment Waydroid's touch FIFO `/dev/input/wl_touch_events` has **no writer** (only Android's reader);
+- after setting it to `4`, that FIFO immediately gains a writer (`composer@2.1-se`) and multi-touch works.
+
+**Fix**: keep the property at `4` (passthrough) while the game runs. Steam may rewrite it to 1 on focus changes, so the launcher re-asserts it with a small watchdog loop:
+
+~~~bash
+# in waydroid-gamemode, before launching cage
+touchfix() {
+  while :; do
+    for d in :0 :1; do
+      v=$(DISPLAY=$d /usr/bin/xprop -root STEAM_TOUCH_CLICK_MODE 2>/dev/null) || continue
+      case "$v" in
+        *"= 4") ;;
+        *) DISPLAY=$d /usr/bin/xprop -root -f STEAM_TOUCH_CLICK_MODE 32c \
+             -set STEAM_TOUCH_CLICK_MODE 4 2>/dev/null || true ;;
+      esac
+    done
+    sleep 2
+  done
+}
+touchfix &
+TOUCHFIX_PID=$!
+# reap it on exit: cleanup() { kill "$TOUCHFIX_PID"; "$WAYDROID" session stop; }
+~~~
+
+The full launcher lives in <code>resources/waydroid-gamemode.sh</code> (already includes this fix).
+
+> Note: this is independent of §7.1 (force-enable Steam Input). §7.1 fixes gamepad/touch mapping; §7.2 fixes multi-touch being collapsed to a single pointer.
+
 ---
 
 ## 8. Steam library artwork (four slots)
@@ -303,6 +341,7 @@ Custom artwork goes in <code>&lt;steam&gt;/userdata/&lt;id&gt;/config/grid/</cod
 | Official images download very slowly | slow SourceForge mirror | download+verify elsewhere and push; or use a multi-connection downloader behind a proxy |
 | overlayfs unavailable | /home is ext4 + casefold | expected; <code>mount_overlays=False</code>, writes into system.img |
 | Touch/gamepad glitchy in Game Mode | Steam Input not force-enabled, so Deck controls are not mapped for Waydroid | Properties → Controller → Steam Input → Force Enabled (see §7.1) |
+| Multi-touch collapsed to a single pointer in Game Mode | Steam writes `STEAM_TOUCH_CLICK_MODE=1` for a non-Steam shortcut; gamescope turns touch into mouse | Launcher re-asserts the property to 4 (see §7.2) |
 
 ---
 

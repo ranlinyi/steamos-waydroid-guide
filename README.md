@@ -263,6 +263,44 @@ WAYDROID_RES=1280x720 %command%
 
 > 不同客户端版本该下拉可能显示为 默认设置 / 强制开启 / 强制关闭（或 启用/禁用）三档；请选“强制开启”，**不要选关闭**。设置后 Waydroid 的触屏与手柄操作恢复正常。
 
+### 7.2 多点触控退化为单点指针：根因与修复
+
+**现象**：游戏模式下 Waydroid 只剩“单点触控”（像鼠标指针），双指缩放/多指手势无效；桌面模式下同一个 Waydroid 多点完全正常。
+
+**根因**（实测定位）：Steam 会把非 Steam 快捷方式当作“不支持触摸的游戏”，在 Xwayland 根窗口写下 X 属性 `STEAM_TOUCH_CLICK_MODE = 1`（值 1 = left，即“把触摸当鼠标左键”）。gamescope 读这个属性覆盖它的 `touch_click_mode`（启动参数 `--default-touch-mode 4` 只是默认值），于是**把所有触摸都转成单个鼠标指针**。这样 cage 永远收不到 `wl_touch`，Waydroid 的 `hwcomposer` 只把指针写进 `/dev/input/wl_pointer_events`，Android 因此只看到一个指针——多点退化为单点。
+
+证据链（可只读复现）：
+
+- `DISPLAY=:0 xprop -root STEAM_TOUCH_CLICK_MODE` → 运行期是 `1`（不是 4）；
+- 此时 Waydroid 的触摸 FIFO `/dev/input/wl_touch_events` **没有任何写端**（只有 Android 的读端）；
+- 把它改成 `4` 后，同一 FIFO 立刻出现写端 `composer@2.1-se`，多点触控恢复。
+
+**修复**：让该属性在游戏运行期间保持为 `4`（passthrough）。Steam 可能在获得焦点时又写回 1，所以入口脚本里用一个小守护循环重申：
+
+~~~bash
+# 在 waydroid-gamemode 里（启动 cage 之前）
+touchfix() {
+  while :; do
+    for d in :0 :1; do
+      v=$(DISPLAY=$d /usr/bin/xprop -root STEAM_TOUCH_CLICK_MODE 2>/dev/null) || continue
+      case "$v" in
+        *"= 4") ;;
+        *) DISPLAY=$d /usr/bin/xprop -root -f STEAM_TOUCH_CLICK_MODE 32c \
+             -set STEAM_TOUCH_CLICK_MODE 4 2>/dev/null || true ;;
+      esac
+    done
+    sleep 2
+  done
+}
+touchfix &
+TOUCHFIX_PID=$!
+# 退出时一并回收：cleanup() { kill "$TOUCHFIX_PID"; "$WAYDROID" session stop; }
+~~~
+
+完整入口脚本见 <code>resources/waydroid-gamemode.sh</code>（已含此修复）。
+
+> 说明：这一条与 §7.1 的“强制启用 Steam 输入”是两件独立的事：§7.1 解决手柄/触控映射，§7.2 解决多点被降级为单点。
+
 ---
 
 ## 8. Steam 库美术（四个槽位）
@@ -303,6 +341,7 @@ WAYDROID_RES=1280x720 %command%
 | 官方镜像下载极慢 | SourceForge 镜像慢 | 在快机器下载+校验后推送；或用下载器多连接+代理 |
 | overlayfs 不可用 | /home 是 ext4 + casefold | 属预期；<code>mount_overlays=False</code>，写进 system.img |
 | 游戏模式里触屏/手柄异常（点击错位、拖拽不跟手） | 未强制启用 Steam 输入，Deck 控制未正确映射给 Waydroid | 属性 → 控制器 → Steam 输入 → 强制开启（见 §7.1） |
+| 游戏模式里多点触控退化为单点（像鼠标） | Steam 给非 Steam 快捷方式写 `STEAM_TOUCH_CLICK_MODE=1`，gamescope 把触摸当鼠标 | 入口脚本把该属性重申为 4（见 §7.2） |
 
 ---
 

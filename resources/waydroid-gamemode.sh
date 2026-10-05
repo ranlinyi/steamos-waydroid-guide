@@ -35,8 +35,31 @@ if ! systemctl is-active --quiet waydroid-container.service; then
   exit 1
 fi
 
+# Touch fix: Steam marks a non-Steam shortcut as "touch = left mouse" via the X11
+# root property STEAM_TOUCH_CLICK_MODE=1. gamescope honours it and turns every touch
+# into a single mouse pointer, so cage/Waydroid never receives wl_touch and Android
+# only ever sees one pointer (multi-touch degrades to single). Force it back to 4
+# (passthrough) while the game runs; re-assert because Steam can rewrite it.
+touchfix() {
+  while :; do
+    for d in :0 :1; do
+      v=$(DISPLAY=$d /usr/bin/xprop -root STEAM_TOUCH_CLICK_MODE 2>/dev/null) || continue
+      case "$v" in
+        *"= 4") ;;
+        *) DISPLAY=$d /usr/bin/xprop -root -f STEAM_TOUCH_CLICK_MODE 32c -set STEAM_TOUCH_CLICK_MODE 4 2>/dev/null || true ;;
+      esac
+    done
+    sleep 2
+  done
+}
+touchfix &
+TOUCHFIX_PID=$!
+
 # Cleanup on any exit (normal, SIGTERM from Steam, Ctrl+C)
-cleanup() { "$WAYDROID" session stop &>/dev/null || true; }
+cleanup() {
+  kill "$TOUCHFIX_PID" 2>/dev/null || true
+  "$WAYDROID" session stop &>/dev/null || true
+}
 trap cleanup EXIT
 
 # cage = nested Wayland compositor. gamescope fullscreens the cage WINDOW, and Android
