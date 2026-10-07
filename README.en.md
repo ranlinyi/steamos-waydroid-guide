@@ -240,6 +240,7 @@ cage -- bash -uc '
 - Add it with <code>steamos-add-to-steam &lt;script or .desktop&gt;</code>, or via "Add a Non-Steam Game".
 - Resolution: Android uses <code>persist.waydroid.width/height</code>; cage uses <code>WAYDROID_RES</code>, or (with the launcher from this repo) the file <code>~/.local/share/waydroid/gamemode-resolution</code>. MAA and similar tools only accept **16:9**, so handhelds commonly use <code>1280x720</code>.
 - Launcher precedence: the <code>gamemode-resolution</code> file &gt; <code>WAYDROID_RES</code> (Steam launch option) &gt; default <code>1280x800</code>. Once the file exists it is the single source of truth; the Steam launch option can stay or be removed.
+- Besides setting the cage output, the launcher also runs <code>waydroid prop set persist.waydroid.width/height</code> once Android is up, forcing the Android surface to match too (Android persists <code>persist.*</code> itself, so editing the cfg and restarting the container alone can be overridden by an old value).
 - The Maa Deck plugin (see <code>decky-maa/</code>) offers a one-tap switch in the QAM: it writes both the Android side and <code>gamemode-resolution</code>, then runs <code>systemctl restart waydroid-container.service</code> so both match after the restart.
 
 ~~~bash

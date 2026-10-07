@@ -88,6 +88,14 @@ trap cleanup EXIT
   # surfaceflinger (inside Android) takes ~15-20s; then set max volume (fix for "no sound").
   for _ in $(seq 1 30); do pgrep -x surfaceflinger >/dev/null && break; sleep 1; done
   sleep 5
+  # Enforce the Android surface resolution from the same RES value, so a stale
+  # persisted property can never desync it from the cage output.
+  for _ in 1 2 3 4 5; do
+    waydroid prop set persist.waydroid.width '"${RES%x*}"' >/dev/null 2>&1 \
+      && waydroid prop set persist.waydroid.height '"${RES#*x}"' >/dev/null 2>&1 \
+      && break
+    sleep 2
+  done
   waydroid shell -- cmd media_session volume --stream 3 --set 15 2>/dev/null || true
   # Gamepad: uevent retrigger — write "add" to /sys/.../input*/event*/uevent →
   # kernel sends udev event → Android registers the controller (Bazzite pattern).
