@@ -238,13 +238,17 @@ cage -- bash -uc '
 ~~~
 
 - 用 <code>steamos-add-to-steam &lt;脚本或 .desktop&gt;</code> 加入 Steam；也可在 Steam UI 里"添加非 Steam 游戏"。
-- 分辨率：Android 侧用 <code>persist.waydroid.width/height</code> 覆盖；cage 侧用 <code>WAYDROID_RES</code> 对齐。MAA 等工具只认 **16:9**，掌机常见设为 <code>1280x720</code>。
+- 分辨率：Android 侧用 <code>persist.waydroid.width/height</code>；cage 侧用 <code>WAYDROID_RES</code>，或（本仓库新版启动脚本）<code>~/.local/share/waydroid/gamemode-resolution</code> 文件对齐。MAA 等工具只认 **16:9**，掌机常见设为 <code>1280x720</code>。
+- 启动脚本取值优先级：<code>gamemode-resolution</code> 文件 &gt; <code>WAYDROID_RES</code>（Steam 启动项）&gt; 默认 <code>1280x800</code>。文件一旦存在即成为唯一来源，Steam 启动项可留可删。
+- Maa Deck 插件（见 <code>decky-maa/</code>）已在 QAM 提供一键切换：同时写 Android 侧与 <code>gamemode-resolution</code>，并执行 <code>systemctl restart waydroid-container.service</code>，重启后两者一致生效。
 
 ~~~bash
-# Android 侧（写 cfg 的 [properties] 与 waydroid_base.prop，重启容器生效）
+# Android 侧（写 cfg 的 [properties]，重启容器生效）
 persist.waydroid.width = 1280
 persist.waydroid.height = 720
-# Steam 快捷方式 LaunchOptions（用 %command% 传环境变量）：
+# cage 侧（任一）：
+echo 1280x720 > ~/.local/share/waydroid/gamemode-resolution
+# 或 Steam 快捷方式 LaunchOptions（用 %command% 传环境变量）：
 WAYDROID_RES=1280x720 %command%
 ~~~
 

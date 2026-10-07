@@ -22,7 +22,17 @@ NIX_BIN="$HOME/.nix-profile/bin"
 export PATH="$NIX_BIN:$PATH"
 WAYDROID="$NIX_BIN/waydroid"
 CAGE="$NIX_BIN/cage"
-RES="${WAYDROID_RES:-1280x800}"   # native Deck resolution; override via env
+# Resolution for both the cage output and (via Maa Deck) the Android surface.
+# Maa Deck writes $RES_FILE when switching; a valid value there wins over the
+# Steam launch option so one switch changes the whole display consistently.
+RES_FILE="$HOME/.local/share/waydroid/gamemode-resolution"
+RES=""
+if [[ -r "$RES_FILE" ]]; then
+  RES="$(head -n1 "$RES_FILE" 2>/dev/null | tr -d '[:space:]')" || RES=""
+fi
+if ! [[ "$RES" =~ ^[0-9]+x[0-9]+$ ]]; then
+  RES="${WAYDROID_RES:-1280x800}"   # native Deck resolution; override via env
+fi
 
 [[ -x "$WAYDROID" ]] || { echo "FATAL: waydroid not found — run: home-manager switch"; exit 1; }
 [[ -x "$CAGE" ]]     || { echo "FATAL: cage not found — run: home-manager switch"; exit 1; }

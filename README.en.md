@@ -238,13 +238,17 @@ cage -- bash -uc '
 ~~~
 
 - Add it with <code>steamos-add-to-steam &lt;script or .desktop&gt;</code>, or via "Add a Non-Steam Game".
-- Resolution: override Android with <code>persist.waydroid.width/height</code>; align cage with <code>WAYDROID_RES</code>. MAA and similar tools only accept **16:9**, so handhelds commonly use <code>1280x720</code>.
+- Resolution: Android uses <code>persist.waydroid.width/height</code>; cage uses <code>WAYDROID_RES</code>, or (with the launcher from this repo) the file <code>~/.local/share/waydroid/gamemode-resolution</code>. MAA and similar tools only accept **16:9**, so handhelds commonly use <code>1280x720</code>.
+- Launcher precedence: the <code>gamemode-resolution</code> file &gt; <code>WAYDROID_RES</code> (Steam launch option) &gt; default <code>1280x800</code>. Once the file exists it is the single source of truth; the Steam launch option can stay or be removed.
+- The Maa Deck plugin (see <code>decky-maa/</code>) offers a one-tap switch in the QAM: it writes both the Android side and <code>gamemode-resolution</code>, then runs <code>systemctl restart waydroid-container.service</code> so both match after the restart.
 
 ~~~bash
-# Android side (write to cfg [properties] and waydroid_base.prop; restart the container)
+# Android side (write to cfg [properties]; restart the container)
 persist.waydroid.width = 1280
 persist.waydroid.height = 720
-# Steam shortcut LaunchOptions (pass env via %command%):
+# cage side (either):
+echo 1280x720 > ~/.local/share/waydroid/gamemode-resolution
+# or Steam shortcut LaunchOptions (pass env via %command%):
 WAYDROID_RES=1280x720 %command%
 ~~~
 
