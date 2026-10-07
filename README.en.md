@@ -302,7 +302,7 @@ TOUCHFIX_PID=$!
 # reap it on exit: cleanup() { kill "$TOUCHFIX_PID"; "$WAYDROID" session stop; }
 ~~~
 
-The full launcher lives in <code>resources/waydroid-gamemode.sh</code> (already includes this fix).
+The full launcher lives in <code>decky-maa/resources/waydroid-gamemode.sh</code> (plugin repo, already includes this fix).
 
 > Note: this is independent of §7.1 (force-enable Steam Input). §7.1 fixes gamepad/touch mapping; §7.2 fixes multi-touch being collapsed to a single pointer.
 
@@ -413,7 +413,7 @@ See [decky-maa/README.md](decky-maa/README.md) for install/build/deploy.
 
 > The plugin is referenced as a **git submodule** (standalone repo: [ranlinyi/decky-maa](https://github.com/ranlinyi/decky-maa)). Clone this repo with <code>--recursive</code>, or run <code>git submodule update --init --recursive</code> afterwards.
 
-Companion files referenced by this guide (Steam grid artwork, the binder shim patch, the Game Mode launcher, and the local copy of the setup script) live in [resources/](resources/).
+Companion files referenced by this guide (Steam grid artwork, the binder shim patch, and the local copy of the setup script) live in [resources/](resources/); the Game Mode launcher lives in the plugin repo at [decky-maa/resources/waydroid-gamemode.sh](decky-maa/resources/waydroid-gamemode.sh).
 
 ---
 

@@ -2,6 +2,8 @@
 
 本目录收录指南里提到的、可复现或可直接取用的配套文件。未收录的见文末说明。
 
+> 游戏模式入口脚本 <code>waydroid-gamemode.sh</code> 已移入插件仓库（<code>decky-maa/resources/</code>），此处不再重复保存。
+
 ## 内容
 
 | 文件 | 说明 | 来源 |
@@ -13,14 +15,13 @@
 | artwork/icon.png | 应用图标 | 同上 |
 | patched-shim.c | 针对 GCC 15 / 内核 6.18 修好的 binder shim（指南 §4.2 的三处修复） | 部署机 ~/.local/share/waydroid-setup/shim.c |
 | shim.h | 强制包含的头：把未导出的 init_ipc_ns 变成运行时解析的指针 | Home Manager 源 |
-| waydroid-gamemode.sh | 游戏模式入口脚本（cage + show-full-ui，含分辨率/音量/手柄处理） | Home Manager 源 |
 | waydroid-setup-local | 放宽「预置镜像」断言后的安装脚本副本（指南 §6） | 部署机 ~/waydroid-setup-local |
 
 ## 用法
 
 - 美术：放到 Steam 的 userdata/<id>/config/grid/，按快捷方式 appid 命名（见指南 §8）。
 - 补丁：用 patched-shim.c 替换上游 shim.c，再跑安装脚本编译 binder（指南 §4.2、§6）。
-- 入口脚本：可参考指南 §7，用 steamos-add-to-steam 加入 Steam。
+- 入口脚本：已移入插件仓库 [decky-maa/resources/waydroid-gamemode.sh](../decky-maa/resources/waydroid-gamemode.sh)（本仓库以 submodule 引入，避免两份不同步）；参考指南 §7 用 steamos-add-to-steam 加入 Steam。
 
 ## 未收录（体积或性质原因）
 
@@ -33,6 +34,6 @@
 ## 许可与出处
 
 - patched-shim.c 源自 Labaman/SteamOS-Waydroid-Nix-Installer 的 shim.c（文件头 SPDX: GPL-2.0），此处为针对 GCC 15 / 内核 6.18.50 的三处本地修复版。
-- waydroid-gamemode.sh、shim.h、waydroid-setup-local 同为上述项目的脚本/配置，按其原始许可分发。
+- shim.h、waydroid-setup-local 同为上述项目的脚本/配置，按其原始许可分发。
 - artwork/ 由 Waydroid 官方 logo 与 AOSP 默认壁纸合成，供个人使用；再分发请自行确认素材授权。
 - 因此本目录中部分文件不适用仓库根的 Unlicense，请以各文件自身声明为准。

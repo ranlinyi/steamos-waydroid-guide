@@ -302,7 +302,7 @@ TOUCHFIX_PID=$!
 # 退出时一并回收：cleanup() { kill "$TOUCHFIX_PID"; "$WAYDROID" session stop; }
 ~~~
 
-完整入口脚本见 <code>resources/waydroid-gamemode.sh</code>（已含此修复）。
+完整入口脚本见 <code>decky-maa/resources/waydroid-gamemode.sh</code>（插件仓库，已含此修复）。
 
 > 说明：这一条与 §7.1 的“强制启用 Steam 输入”是两件独立的事：§7.1 解决手柄/触控映射，§7.2 解决多点被降级为单点。
 
@@ -413,7 +413,7 @@ TOUCHFIX_PID=$!
 
 > 插件以 **git submodule** 形式引用（独立仓库：[ranlinyi/decky-maa](https://github.com/ranlinyi/decky-maa)）。克隆本仓库时请加 <code>--recursive</code>，或事后执行 <code>git submodule update --init --recursive</code>。
 
-本文用到的配套文件（Steam 库美术四图、binder shim 补丁、游戏模式入口脚本、安装脚本本地副本）见 [resources/](resources/)。
+本文用到的配套文件（Steam 库美术四图、binder shim 补丁、安装脚本本地副本）见 [resources/](resources/)；游戏模式入口脚本在插件仓库 [decky-maa/resources/waydroid-gamemode.sh](decky-maa/resources/waydroid-gamemode.sh)。
 
 ---
 
